@@ -1,117 +1,265 @@
-// Import Matter.js
-let Engine = Matter.Engine,
-    World = Matter.World,
-    Bodies = Matter.Bodies,
-    Constraint = Matter.Constraint;
+// Module aliases for Matter.js
+const Engine = Matter.Engine,
+      World  = Matter.World,
+      Bodies = Matter.Bodies,
+      Body   = Matter.Body,
+      Constraint = Matter.Constraint,
+      Composite = Matter.Composite;
 
+// Global variables
 let engine, world;
-let stickman, joints = [];
+let ground, leftWall, rightWall;
+let stickman = {}; // object to hold stickman parts and constraints
 let ai;
-
-// Stickman parts
-let head, torso, upperArms, lowerArms, upperLegs, lowerLegs;
-let constraints = [];
+let standTimer = 0;
+let standing = false;
 
 function setup() {
-    createCanvas(600, 400);
-    engine = Engine.create();
-    world = engine.world;
-
-    // Stickman body parts
-    head = Bodies.circle(300, 100, 15, { restitution: 0.5 });
-    torso = Bodies.rectangle(300, 160, 20, 60, { restitution: 0.5 });
-
-    upperArms = [
-        Bodies.rectangle(270, 160, 30, 10),
-        Bodies.rectangle(330, 160, 30, 10)
-    ];
-    lowerArms = [
-        Bodies.rectangle(250, 180, 30, 10),
-        Bodies.rectangle(350, 180, 30, 10)
-    ];
-
-    upperLegs = [
-        Bodies.rectangle(290, 210, 10, 40),
-        Bodies.rectangle(310, 210, 10, 40)
-    ];
-    lowerLegs = [
-        Bodies.rectangle(290, 260, 10, 40),
-        Bodies.rectangle(310, 260, 10, 40)
-    ];
-
-    // Joints (constraints)
-    constraints.push(Constraint.create({ bodyA: head, bodyB: torso }));
-    constraints.push(Constraint.create({ bodyA: torso, bodyB: upperArms[0] }));
-    constraints.push(Constraint.create({ bodyA: torso, bodyB: upperArms[1] }));
-    constraints.push(Constraint.create({ bodyA: upperArms[0], bodyB: lowerArms[0] }));
-    constraints.push(Constraint.create({ bodyA: upperArms[1], bodyB: lowerArms[1] }));
-    constraints.push(Constraint.create({ bodyA: torso, bodyB: upperLegs[0] }));
-    constraints.push(Constraint.create({ bodyA: torso, bodyB: upperLegs[1] }));
-    constraints.push(Constraint.create({ bodyA: upperLegs[0], bodyB: lowerLegs[0] }));
-    constraints.push(Constraint.create({ bodyA: upperLegs[1], bodyB: lowerLegs[1] }));
-
-    // Add all bodies and constraints to the world
-    let allBodies = [head, torso, ...upperArms, ...lowerArms, ...upperLegs, ...lowerLegs];
-    allBodies.forEach(body => World.add(world, body));
-    constraints.forEach(c => World.add(world, c));
-
-    ai = new StickmanAI();
+  createCanvas(800, 600);
+  
+  // Create engine and world
+  engine = Engine.create();
+  world = engine.world;
+  world.gravity.y = 1; // gravity
+  
+  // Create boundaries: ground, left and right walls
+  ground = Bodies.rectangle(width/2, height - 10, width, 20, { isStatic: true });
+  leftWall = Bodies.rectangle(0, height/2, 20, height, { isStatic: true });
+  rightWall = Bodies.rectangle(width, height/2, 20, height, { isStatic: true });
+  World.add(world, [ground, leftWall, rightWall]);
+  
+  // Create stickman parts:
+  // We'll build a simple stickman with head, torso, arms and legs.
+  // Adjust positions so the stickman starts near the center.
+  let startX = width/2, startY = height/2 - 100;
+  
+  // Head: circle
+  stickman.head = Bodies.circle(startX, startY, 15, { density: 0.001, friction: 0.1 });
+  
+  // Torso: rectangle
+  stickman.torso = Bodies.rectangle(startX, startY + 40, 20, 60, { density: 0.001, friction: 0.1 });
+  
+  // Upper arms: rectangles
+  stickman.upperArmL = Bodies.rectangle(startX - 25, startY + 30, 30, 8, { density: 0.001, friction: 0.1 });
+  stickman.upperArmR = Bodies.rectangle(startX + 25, startY + 30, 30, 8, { density: 0.001, friction: 0.1 });
+  
+  // Lower arms: rectangles
+  stickman.lowerArmL = Bodies.rectangle(startX - 45, startY + 30, 30, 8, { density: 0.001, friction: 0.1 });
+  stickman.lowerArmR = Bodies.rectangle(startX + 45, startY + 30, 30, 8, { density: 0.001, friction: 0.1 });
+  
+  // Upper legs: rectangles
+  stickman.upperLegL = Bodies.rectangle(startX - 7, startY + 80, 10, 40, { density: 0.001, friction: 0.1 });
+  stickman.upperLegR = Bodies.rectangle(startX + 7, startY + 80, 10, 40, { density: 0.001, friction: 0.1 });
+  
+  // Lower legs: rectangles (feet)
+  stickman.lowerLegL = Bodies.rectangle(startX - 7, startY + 130, 10, 40, { density: 0.001, friction: 0.8 });
+  stickman.lowerLegR = Bodies.rectangle(startX + 7, startY + 130, 10, 40, { density: 0.001, friction: 0.8 });
+  
+  // Add all parts to the world
+  let parts = [
+    stickman.head, stickman.torso,
+    stickman.upperArmL, stickman.upperArmR,
+    stickman.lowerArmL, stickman.lowerArmR,
+    stickman.upperLegL, stickman.upperLegR,
+    stickman.lowerLegL, stickman.lowerLegR
+  ];
+  World.add(world, parts);
+  
+  // Create constraints (joints) between parts with fixed lengths
+  stickman.constraints = [];
+  
+  // Head to torso
+  stickman.constraints.push(Constraint.create({
+    bodyA: stickman.head,
+    pointA: { x: 0, y: 15 },
+    bodyB: stickman.torso,
+    pointB: { x: 0, y: -30 },
+    length: 0,
+    stiffness: 1
+  }));
+  
+  // Torso to upper arms
+  stickman.constraints.push(Constraint.create({
+    bodyA: stickman.torso,
+    pointA: { x: -10, y: -20 },
+    bodyB: stickman.upperArmL,
+    pointB: { x: 15, y: 0 },
+    length: 0,
+    stiffness: 0.7
+  }));
+  stickman.constraints.push(Constraint.create({
+    bodyA: stickman.torso,
+    pointA: { x: 10, y: -20 },
+    bodyB: stickman.upperArmR,
+    pointB: { x: -15, y: 0 },
+    length: 0,
+    stiffness: 0.7
+  }));
+  
+  // Upper arms to lower arms (elbow joints)
+  stickman.constraints.push(Constraint.create({
+    bodyA: stickman.upperArmL,
+    pointA: { x: -15, y: 0 },
+    bodyB: stickman.lowerArmL,
+    pointB: { x: 15, y: 0 },
+    length: 0,
+    stiffness: 0.7
+  }));
+  stickman.constraints.push(Constraint.create({
+    bodyA: stickman.upperArmR,
+    pointA: { x: 15, y: 0 },
+    bodyB: stickman.lowerArmR,
+    pointB: { x: -15, y: 0 },
+    length: 0,
+    stiffness: 0.7
+  }));
+  
+  // Torso to upper legs (hip joints)
+  stickman.constraints.push(Constraint.create({
+    bodyA: stickman.torso,
+    pointA: { x: -5, y: 30 },
+    bodyB: stickman.upperLegL,
+    pointB: { x: 0, y: -20 },
+    length: 0,
+    stiffness: 0.8
+  }));
+  stickman.constraints.push(Constraint.create({
+    bodyA: stickman.torso,
+    pointA: { x: 5, y: 30 },
+    bodyB: stickman.upperLegR,
+    pointB: { x: 0, y: -20 },
+    length: 0,
+    stiffness: 0.8
+  }));
+  
+  // Upper legs to lower legs (knee joints)
+  stickman.constraints.push(Constraint.create({
+    bodyA: stickman.upperLegL,
+    pointA: { x: 0, y: 20 },
+    bodyB: stickman.lowerLegL,
+    pointB: { x: 0, y: -20 },
+    length: 0,
+    stiffness: 0.8
+  }));
+  stickman.constraints.push(Constraint.create({
+    bodyA: stickman.upperLegR,
+    pointA: { x: 0, y: 20 },
+    bodyB: stickman.lowerLegR,
+    pointB: { x: 0, y: -20 },
+    length: 0,
+    stiffness: 0.8
+  }));
+  
+  // Add all constraints to the world
+  World.add(world, stickman.constraints);
+  
+  // Initialize the AI controller for the stickman
+  ai = new StickmanAI();
 }
 
 function draw() {
-    background(220);
-    Engine.update(engine);
-
-    // Draw stickman
-    drawBodyPart(head);
-    drawBodyPart(torso);
-    upperArms.forEach(drawBodyPart);
-    lowerArms.forEach(drawBodyPart);
-    upperLegs.forEach(drawBodyPart);
-    lowerLegs.forEach(drawBodyPart);
-
-    // AI updates joint angles
-    ai.control(stickman);
+  background(220);
+  Engine.update(engine);
+  
+  // Draw ground and boundaries
+  noStroke();
+  fill(100);
+  drawBody(ground);
+  drawBody(leftWall);
+  drawBody(rightWall);
+  
+  // Draw stickman parts
+  fill(0);
+  drawBody(stickman.head);
+  drawBody(stickman.torso);
+  drawBody(stickman.upperArmL);
+  drawBody(stickman.upperArmR);
+  drawBody(stickman.lowerArmL);
+  drawBody(stickman.lowerArmR);
+  drawBody(stickman.upperLegL);
+  drawBody(stickman.upperLegR);
+  drawBody(stickman.lowerLegL);
+  drawBody(stickman.lowerLegR);
+  
+  // Let the AI control the stickman (placeholder control)
+  ai.control();
+  
+  // Check if only the feet are touching the ground
+  if (feetTouchingFloor()) {
+    standTimer += deltaTime;
+    if (standTimer >= 3000) { // 3000 ms = 3 seconds
+      fill(0, 150, 0);
+      textSize(32);
+      text("Goal Achieved!", width/2 - 100, 50);
+    }
+  } else {
+    standTimer = 0;
+  }
+  
+  // Display timer info
+  fill(0);
+  textSize(16);
+  text("Standing time: " + (standTimer/1000).toFixed(2) + " sec", 10, 20);
 }
 
-// Draw function for bodies
-function drawBodyPart(body) {
-    let pos = body.position;
-    let angle = body.angle;
-    push();
-    translate(pos.x, pos.y);
-    rotate(angle);
+// Helper to draw a Matter body
+function drawBody(body) {
+  push();
+  translate(body.position.x, body.position.y);
+  rotate(body.angle);
+  if (body.circleRadius) {
+    ellipse(0, 0, body.circleRadius*2);
+  } else {
+    let w = body.bounds.max.x - body.bounds.min.x;
+    let h = body.bounds.max.y - body.bounds.min.y;
     rectMode(CENTER);
-    rect(0, 0, body.bounds.max.x - body.bounds.min.x, body.bounds.max.y - body.bounds.min.y);
-    pop();
+    rect(0, 0, w, h);
+  }
+  pop();
 }
 
-// Basic AI class (to be improved with reinforcement learning)
+// Check if only the feet (lowerLegs) are touching the floor (ground)
+function feetTouchingFloor() {
+  // Simple check: if both lower legs are near the ground (y coordinate near ground)
+  let tolerance = 5;
+  let leftFoot = stickman.lowerLegL.position;
+  let rightFoot = stickman.lowerLegR.position;
+  return (leftFoot.y + tolerance >= ground.position.y - 10 &&
+          rightFoot.y + tolerance >= ground.position.y - 10);
+}
+
+// Placeholder AI class
 class StickmanAI {
-    constructor() {
-        this.timer = 0;
-    }
-
-    control() {
-        // Simple random adjustments (later: learn from attempts)
-        for (let i = 0; i < joints.length; i++) {
-            Matter.Body.setAngle(joints[i], joints[i].angle + random(-0.1, 0.1));
-        }
-
-        // Check if standing
-        if (this.isStanding()) {
-            this.timer++;
-            if (this.timer > 180) { // 3 seconds at 60fps
-                console.log("Success!");
-            }
-        } else {
-            this.timer = 0;
-        }
-    }
-
-    isStanding() {
-        let feet = [lowerLegs[0], lowerLegs[1]];
-        let touchingFloor = feet.every(leg => leg.position.y > height - 10);
-        return touchingFloor;
-    }
+  constructor() {
+    // In a self-learning scenario, you would initialize your RL network here.
+    // For now, we use random small torques as a stand-in.
+    this.torqueStrength = 0.00005;
+  }
+  
+  control() {
+    // For each joint (here we apply torques to the bodies at the joints)
+    // We will “control” the limbs by applying a small random torque.
+    // In a real RL system, you would compute these based on observations and a policy.
+    let bodies = [
+      stickman.torso,
+      stickman.upperArmL, stickman.lowerArmL,
+      stickman.upperArmR, stickman.lowerArmR,
+      stickman.upperLegL, stickman.lowerLegL,
+      stickman.upperLegR, stickman.lowerLegR
+    ];
+    bodies.forEach(body => {
+      let randomTorque = random(-this.torqueStrength, this.torqueStrength);
+      Body.applyForce(body, body.position, { x: 0, y: randomTorque });
+    });
+    
+    // Prevent the stickman from leaving the screen: if any part gets too close to a wall, push it back.
+    bodies.forEach(body => {
+      if (body.position.x < 30) {
+        Body.applyForce(body, body.position, { x: 0.005, y: 0 });
+      }
+      if (body.position.x > width - 30) {
+        Body.applyForce(body, body.position, { x: -0.005, y: 0 });
+      }
+    });
+  }
 }
